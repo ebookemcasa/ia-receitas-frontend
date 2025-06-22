@@ -1,0 +1,3 @@
+# Ignorar ficheiros temporários ou de IDE
+.DS_Store
+*.log

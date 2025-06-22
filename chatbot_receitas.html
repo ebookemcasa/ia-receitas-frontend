@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chef IA de Receitas</title>
+    <!-- Tailwind CSS CDN para estilização rápida -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts - Inter para a fonte principal -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        /* Estilos básicos para o corpo e o elemento raiz */
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+            overflow: hidden; /* Evita que o corpo role, permitindo que a área de chat role */
+        }
+        #root {
+            height: 100vh; /* Faz com que o elemento raiz ocupe a altura total da janela de visualização */
+            display: flex;
+            flex-direction: column;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div> <!-- Onde o seu aplicativo React será montado -->
+
+    <!-- CDNs do React e ReactDOM -->
+    <!-- React 18 Production Build -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel CDN (Essencial para transpilar JSX no navegador) -->
+    <!-- Deve ser carregado depois de React/ReactDOM -->
+    <script crossorigin src="https://unpkg.com/babel-standalone@6.26.0/babel.min.js"></script>
+
+    <script type="text/babel">
+        // Componente principal do aplicativo React
+        const App = () => {
+            // Estado para armazenar todas as mensagens do chat (usuário e IA)
+            const [messages, setMessages] = React.useState([]);
+            // Estado para o texto atual na caixa de entrada do usuário
+            const [input, setInput] = React.useState('');
+            // Estado para controlar o indicador de carregamento (quando a IA está a responder)
+            const [isLoading, setIsLoading] = React.useState(false);
+            // Referência para o último elemento da lista de mensagens, usado para rolagem automática
+            const messagesEndRef = React.useRef(null);
+
+            // Hook useEffect para rolar automaticamente a área de mensagens para baixo
+            // É acionado sempre que a lista de 'messages' é atualizada
+            React.useEffect(() => {
+                // Verifica se a referência existe e, se sim, rola para ela de forma suave
+                messagesEndRef.current && messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+            }, [messages]); // Dependência: o efeito é executado quando 'messages' muda
+
+            // Função assíncrona para enviar a mensagem do usuário para o backend
+            const sendMessage = async () => {
+                // Não envia a mensagem se o campo de entrada estiver vazio ou apenas com espaços
+                if (input.trim() === '') return;
+
+                // Adiciona a mensagem do usuário à lista de mensagens no estado
+                const newUserMessage = { sender: 'user', text: input };
+                setMessages(prevMessages => [...prevMessages, newUserMessage]);
+                setInput(''); // Limpa o campo de entrada após enviar
+                setIsLoading(true); // Ativa o indicador de carregamento
+
+                try {
+                    // O prompt inicial define o "papel" e as capacidades da IA.
+                    // Ele é enviado ao backend para ser incluído no contexto da conversa com a API Gemini.
+                    const initialPrompt = `Você é um chef de cozinha e nutricionista especializado em criar e adaptar receitas, e planear dietas. Sua função é compreender perguntas sobre cozinha e alimentação, interpretá-las e fornecer explicações profissionais detalhadas em português brasileiro.
+
+                    Você deve ser capaz de:
+                    - Sugerir receitas com base em ingredientes, tipo de cozinha, ocasião ou preferências.
+                    - Substituir temperos e ingredientes em receitas, explicando o motivo da substituição e o impacto no sabor/textura.
+                    - Criar dietas específicas (ex: para perda de peso, ganho de massa, vegetarianas, veganas, sem glúten, sem lactose, low-carb, etc.), fornecendo exemplos de refeições.
+                    - Criar receitas adaptadas para diferentes tipos de dietas ou restrições alimentares.
+                    - Dar o passo a passo detalhado de cada receita.
+                    - Responder a perguntas gerais sobre técnicas de cozinha, segurança alimentar, armazenamento de alimentos, etc.
+                    - Seja sempre amigável, prestativo e profissional.
+                    - Se a pergunta não for clara, peça mais detalhes.
+
+                    Vamos começar! Como posso ajudá-lo na cozinha hoje?`;
+
+                    // Corpo da requisição a ser enviada para o seu servidor de backend
+                    const requestBody = {
+                        // Mapeia o histórico de mensagens para o formato esperado pelo backend
+                        chatHistory: messages.map(msg => ({ 
+                            role: msg.sender === 'user' ? 'user' : 'model', // 'user' ou 'model'
+                            parts: [{ text: msg.text }] // O conteúdo da mensagem
+                        })),
+                        currentMessage: input, // A mensagem atual do usuário
+                        initialPrompt: initialPrompt // O prompt inicial da IA
+                    };
+
+                    // URL do seu servidor de backend Flask
+                    // Quando implantar o backend, substitua 'http://localhost:5000' pelo URL público do seu servidor.
+                    const backendUrl = "http://localhost:5000/gerar-resposta-ia"; 
+                    
+                    // Faz a requisição HTTP POST para o seu backend
+                    const response = await fetch(backendUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(requestBody) // Converte o corpo da requisição para JSON
+                    });
+
+                    // Verifica se a resposta do backend foi bem-sucedida (status 2xx)
+                    if (!response.ok) {
+                        const errorData = await response.text(); // Tenta ler o corpo do erro para mais detalhes
+                        throw new Error(`Erro na resposta do backend: ${response.status} ${response.statusText} - Detalhes: ${errorData}`);
+                    }
+
+                    // Analisa a resposta JSON do backend
+                    const result = await response.json(); 
+
+                    // Verifica se a resposta contém a resposta da IA (campo 'aiResponse')
+                    if (result.aiResponse) { 
+                        const aiResponse = result.aiResponse;
+                        // Adiciona a resposta da IA à lista de mensagens no estado
+                        setMessages(prevMessages => [...prevMessages, { sender: 'ai', text: aiResponse }]);
+                    } else {
+                        // Se o backend retornou sucesso, mas sem o campo esperado 'aiResponse'
+                        console.error("Estrutura de resposta do backend inesperada:", result);
+                        setMessages(prevMessages => [...prevMessages, { sender: 'ai', text: "Desculpe, o servidor não conseguiu gerar uma resposta no formato esperado. Por favor, tente novamente." }]);
+                    }
+                } catch (error) {
+                    // Captura e trata erros durante a comunicação com o backend
+                    console.error("Erro ao comunicar com o backend:", error);
+                    setMessages(prevMessages => [...prevMessages, { sender: 'ai', text: `Ocorreu um erro ao processar a sua solicitação: ${error.message}. Por favor, tente novamente mais tarde.` }]);
+                    console.log("Verifique se o seu servidor backend está a correr e acessível em " + backendUrl);
+                } finally {
+                    setIsLoading(false); // Desativa o indicador de carregamento
+                }
+            };
+
+            // Lida com o evento de pressionar a tecla no campo de entrada
+            const handleKeyPress = (e) => {
+                // Se a tecla pressionada for 'Enter' e a IA não estiver a carregar uma resposta
+                if (e.key === 'Enter' && !isLoading) {
+                    sendMessage(); // Envia a mensagem
+                }
+            };
+
+            // JSX (estrutura visual do componente React)
+            return (
+                <div className="flex flex-col h-screen bg-gray-100 font-inter">
+                    {/* Cabeçalho do Chatbot */}
+                    <header className="bg-gradient-to-r from-green-500 to-blue-500 text-white p-4 text-center shadow-md rounded-b-lg">
+                        <h1 className="text-3xl font-bold rounded-lg p-2">Chef IA de Receitas</h1>
+                        <p className="text-lg">O seu assistente pessoal na cozinha!</p>
+                    </header>
+
+                    {/* Área de Exibição das Mensagens do Chat */}
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4 rounded-lg m-4 bg-white shadow-inner">
+                        {/* Mensagem de boas-vindas inicial (exibida apenas se não houver mensagens) */}
+                        {messages.length === 0 && (
+                            <div className="flex justify-start">
+                                <div className="bg-gray-200 p-3 rounded-lg max-w-xs md:max-w-md shadow-sm">
+                                    <p className="text-gray-800">Olá! Eu sou o seu Chef IA de Receitas. Como posso ajudá-lo na cozinha hoje?</p>
+                                </div>
+                            </div>
+                        )}
+                        {/* Mapeia e exibe cada mensagem na lista 'messages' */}
+                        {messages.map((msg, index) => (
+                            <div key={index} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                <div className={`p-3 rounded-lg max-w-xs md:max-w-md shadow-sm ${msg.sender === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-800'}`}>
+                                    {/* Divide o texto por quebras de linha para exibir em parágrafos separados */}
+                                    {msg.text.split('\n').map((line, i) => (
+                                        <p key={i}>{line}</p>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                        {/* Indicador de "A digitar..." quando a IA está a carregar */}
+                        {isLoading && (
+                            <div className="flex justify-start">
+                                <div className="bg-gray-200 p-3 rounded-lg max-w-xs md:max-w-md shadow-sm">
+                                    <p className="text-gray-600 animate-pulse">A digitar...</p>
+                                </div>
+                            </div>
+                        )}
+                        {/* Elemento invisível para rolagem automática */}
+                        <div ref={messagesEndRef} /> 
+                    </div>
+
+                    {/* Área de Entrada de Texto e Botão de Envio */}
+                    <div className="p-4 bg-white border-t border-gray-200 flex items-center rounded-t-lg m-4 shadow-md">
+                        <input
+                            type="text"
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            onKeyPress={handleKeyPress}
+                            placeholder="Escreva a sua pergunta aqui..."
+                            className="flex-1 p-3 border border-gray-300 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-blue-400 text-lg"
+                            disabled={isLoading} /* Desabilita o input enquanto a IA responde */
+                        />
+                        <button
+                            onClick={sendMessage}
+                            className="bg-blue-600 text-white p-3 rounded-r-lg hover:bg-blue-700 transition-colors duration-200 shadow-md text-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                            disabled={isLoading} /* Desabilita o botão enquanto a IA responde */
+                        >
+                            {isLoading ? (
+                                <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                            ) : (
+                                <span>Enviar</span> /* Texto do botão */
+                            )}
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        // Renderiza o componente 'App' na div com id="root"
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
